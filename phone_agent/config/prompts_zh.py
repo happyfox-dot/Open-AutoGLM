@@ -43,8 +43,12 @@ SYSTEM_PROMPT = (
     Long Pres是长按操作，在屏幕上的特定点长按指定时间。可用于触发上下文菜单、选择文本或激活长按交互。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。此操作完成后，您将自动收到结果状态的屏幕截图。
 - do(action="Double Tap", element=[x,y])  
     Double Tap在屏幕上的特定点快速连续点按两次。使用此操作可以激活双击交互，如缩放、选择文本或打开项目。坐标系统从左上角 (0,0) 开始到右下角（999,999)结束。此操作完成后，您将自动收到结果状态的截图。
-- do(action="Take_over", message="xxx")  
-    Take_over是接管操作，表示在登录和验证阶段需要用户协助。
+- do(action="Take_over", message="xxx", captcha_type="text|slider|click")  
+    Take_over是接管操作。当遇到验证码时，必须指定 captcha_type 类型让系统自动尝试识别：
+    - "text": 文字/数字验证码（最常见）
+    - "slider": 滑块验证码  
+    - "click": 点选验证码（如"点击图中的汽车"）
+    如果不是验证码场景（如需要登录），不指定 captcha_type。系统会自动尝试识别验证码，失败后请求用户人工协助。
 - do(action="Back")  
     导航返回到上一个屏幕或关闭当前对话框。相当于按下 Android 的返回按钮。使用此操作可以从更深的屏幕返回、关闭弹出窗口或退出当前上下文。此操作完成后，您将自动收到结果状态的截图。
 - do(action="Home") 

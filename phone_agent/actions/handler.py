@@ -10,6 +10,14 @@ from typing import Any, Callable
 from phone_agent.config.timing import TIMING_CONFIG
 from phone_agent.device_factory import get_device_factory
 
+# Optional import for CAPTCHA solving
+try:
+    from phone_agent.captcha import CaptchaSolver
+    CAPTCHA_AVAILABLE = True
+except ImportError:
+    CAPTCHA_AVAILABLE = False
+    CaptchaSolver = None
+
 
 @dataclass
 class ActionResult:
@@ -37,10 +45,26 @@ class ActionHandler:
         device_id: str | None = None,
         confirmation_callback: Callable[[str], bool] | None = None,
         takeover_callback: Callable[[str], None] | None = None,
+        captcha_solver: "CaptchaSolver | None" = None,
+        model_client=None,
+        auto_captcha: bool = True,
+        captcha_max_retries: int = 3,
     ):
         self.device_id = device_id
         self.confirmation_callback = confirmation_callback or self._default_confirmation
         self.takeover_callback = takeover_callback or self._default_takeover
+        self.auto_captcha = auto_captcha
+        self.captcha_max_retries = captcha_max_retries
+        
+        # Initialize CAPTCHA solver if auto_captcha is enabled
+        if auto_captcha and CAPTCHA_AVAILABLE:
+            self.captcha_solver = captcha_solver or CaptchaSolver(
+                model_client=model_client,
+                use_ocr=True,
+                max_retries=captcha_max_retries
+            )
+        else:
+            self.captcha_solver = None
 
     def execute(
         self, action: dict[str, Any], screen_width: int, screen_height: int
@@ -235,8 +259,97 @@ class ActionHandler:
     def _handle_takeover(self, action: dict, width: int, height: int) -> ActionResult:
         """Handle takeover request (login, captcha, etc.)."""
         message = action.get("message", "User intervention required")
+        captcha_type = action.get("captcha_type")
+        
+        # If captcha_type is specified and auto_captcha is enabled, try to solve automatically
+        if captcha_type and self.captcha_solver:
+            result = self._try_solve_captcha(action, width, height, captcha_type)
+            if result.success:
+                return result
+            # Auto-solve failed, fall back to manual intervention
+            print(f"\n⚠️ 自动验证码识别失败，请手动处理...")
+        
+        # Request manual takeover
         self.takeover_callback(message)
         return ActionResult(True, False)
+    
+    def _try_solve_captcha(
+        self, action: dict, width: int, height: int, captcha_type: str
+    ) -> ActionResult:
+        """
+        Attempt to automatically solve a CAPTCHA.
+        
+        Args:
+            action: The action dictionary containing captcha info
+            width: Screen width
+            height: Screen height
+            captcha_type: Type of CAPTCHA (text, slider, click)
+        
+        Returns:
+            ActionResult indicating success/failure
+        """
+        from phone_agent.device_factory import get_device_factory
+        
+        device_factory = get_device_factory()
+        hint = action.get("message", "")
+        
+        print(f"\n🔍 正在尝试自动识别验证码 (类型: {captcha_type})...")
+        
+        for attempt in range(self.captcha_max_retries):
+            # Capture current screen
+            screenshot = device_factory.get_screenshot(self.device_id)
+            
+            # Attempt to solve
+            result = self.captcha_solver.solve(
+                screenshot_base64=screenshot.base64_data,
+                captcha_type=captcha_type,
+                hint=hint
+            )
+            
+            if not result.success:
+                print(f"   尝试 {attempt + 1}/{self.captcha_max_retries}: 识别失败 - {result.error}")
+                continue
+            
+            print(f"   尝试 {attempt + 1}/{self.captcha_max_retries}: 识别成功 - {result.value} (置信度: {result.confidence:.2f})")
+            
+            # Execute based on captcha type
+            try:
+                if captcha_type == "text":
+                    # Type the recognized text
+                    self._handle_type({"text": result.value}, width, height)
+                    print(f"   ✅ 已输入验证码: {result.value}")
+                    return ActionResult(True, False, message=f"验证码已自动输入: {result.value}")
+                
+                elif captcha_type == "slider":
+                    # Perform slider action
+                    if isinstance(result.value, int):
+                        # Assuming slider starts from left side, swipe right by the distance
+                        start_x = 50  # Start near left edge
+                        start_y = height // 2
+                        end_x = start_x + int(result.value / 1000 * width)  # Convert to absolute
+                        end_y = start_y
+                        device_factory.swipe(start_x, start_y, end_x, end_y, device_id=self.device_id)
+                        print(f"   ✅ 已滑动滑块: {result.value}px")
+                        return ActionResult(True, False, message=f"滑块验证已完成")
+                
+                elif captcha_type == "click":
+                    # Perform click actions on each point
+                    if isinstance(result.value, list):
+                        for i, point in enumerate(result.value):
+                            x, y = self._convert_relative_to_absolute(point, width, height)
+                            device_factory.tap(x, y, self.device_id)
+                            time.sleep(0.3)  # Small delay between clicks
+                        print(f"   ✅ 已点击 {len(result.value)} 个位置")
+                        return ActionResult(True, False, message=f"点选验证已完成")
+                
+            except Exception as e:
+                print(f"   ❌ 执行验证码操作失败: {e}")
+                continue
+            
+            # Wait a bit and check if verification passed
+            time.sleep(1.0)
+        
+        return ActionResult(False, False, message="自动验证码识别失败")
 
     def _handle_note(self, action: dict, width: int, height: int) -> ActionResult:
         """Handle note action (placeholder for content recording)."""

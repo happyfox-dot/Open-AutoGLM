@@ -22,6 +22,10 @@ class AgentConfig:
     lang: str = "cn"
     system_prompt: str | None = None
     verbose: bool = True
+    # CAPTCHA auto-solving options
+    auto_captcha: bool = True  # Whether to auto-solve CAPTCHAs
+    captcha_max_retries: int = 3  # Max retries for CAPTCHA solving
+    captcha_use_ocr: bool = True  # Use local OCR as fallback
 
     def __post_init__(self):
         if self.system_prompt is None:
@@ -76,6 +80,9 @@ class PhoneAgent:
             device_id=self.agent_config.device_id,
             confirmation_callback=confirmation_callback,
             takeover_callback=takeover_callback,
+            model_client=self.model_client,
+            auto_captcha=self.agent_config.auto_captcha,
+            captcha_max_retries=self.agent_config.captcha_max_retries,
         )
 
         self._context: list[dict[str, Any]] = []
